@@ -13,13 +13,13 @@ struct FieldNote: Identifiable {
     let id: UUID = UUID()
     let createdAt: Date
     let imagePath: String
-    let audioPath: String?
+    var audioFileName: String?
     var text: String
 
-    init(createdAt: Date, imagePath: String, audioPath: String?, text: String) {
+    init(createdAt: Date, imagePath: String, audioFileName: String?, text: String) {
         self.createdAt = createdAt
         self.imagePath = imagePath
-        self.audioPath = audioPath
+        self.audioFileName = audioFileName
         self.text = text
     }
 }

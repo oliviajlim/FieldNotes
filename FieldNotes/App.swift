@@ -1,23 +1,13 @@
+import CoreData
 import SwiftUI
 
 @main struct MyApp: App {
+    let persistenceController = PersistenceController()
+
     var body: some Scene {
         WindowGroup {
-            let viewModel = HomeViewModel(notes: [
-                FieldNote(
-                    createdAt: Date(),
-                    imagePath: "sample-image",
-                    audioPath: nil,
-                    text: "Sun and dance"
-                ),
-                FieldNote(
-                    createdAt: Date(),
-                    imagePath: "sample-image-2",
-                    audioPath: nil,
-                    text: "Sleep"
-                )
-            ])
-            HomeView(viewModel: viewModel)
+            HomeView()
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
     }
 }

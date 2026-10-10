@@ -46,13 +46,65 @@ final class AudioRecorderManager {
              */
             print("Mic format: \(format)")
 
+            try createFile(noteID: id, micFormat: format)
             activeRecordingNoteID = id
+//            writeToFile()
         } catch {
             print("error: \(error)")
         }
     }
 
+    func createFile(noteID: UUID, micFormat: AVAudioFormat) throws {
+        let folderURL = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appending(path: "Recordings")
+
+        // ApplicationSupport/Recordings
+
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true) // Actually creates the folder
+
+        let fileURL = folderURL.appending(path: "\(noteID.uuidString).m4a")
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,   // on disk: compress to AAC (.m4a)
+            AVSampleRateKey: micFormat.sampleRate,                 // samples per second
+            AVNumberOfChannelsKey: micFormat.channelCount            // how many channels
+        ]
+
+        recordingFile = try AVAudioFile(
+            forWriting: fileURL,
+            settings: settings,
+            commonFormat: micFormat.commonFormat,        // the kind of numbers in the buffers (the "Float32" part)
+            interleaved: micFormat.isInterleaved       // how channels are arranged in the buffers
+        )
+
+        print(fileURL)
+        print(FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)))
+    }
+
+    /// nonisolated: the tap closure runs on the audio thread, not the main thread.
+    private nonisolated static func installTap(
+        on input: AVAudioInputNode,
+        format: AVAudioFormat,
+        file: AVAudioFile
+    ) {
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            // ← runs ~10×/second on the AUDIO thread
+            // 1. write `buffer` into `file`
+            // 2. print buffer.frameLength (temporary, to see it working)
+        }
+    }
+
+    func closeFile() {
+        
+    }
+
     func stopRecording() {
+
+        closeFile()
         // trim audio
 
         self.activeRecordingNoteID = nil
