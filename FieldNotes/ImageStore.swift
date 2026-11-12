@@ -3,6 +3,7 @@
 //  FieldNotes
 //
 
+import ImageIO
 import UIKit
 
 /// Stores note photos in Application Support/Images. Core Data keeps only the filename,
@@ -49,4 +50,19 @@ enum ImageStore {
         return await image.byPreparingForDisplay()
     }
 
+    @concurrent nonisolated static func loadThumbnail(fileName: String, maxPixelSize: Int) async -> UIImage? {
+        guard let url = try? folderURL().appending(path: fileName),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        return UIImage(cgImage: thumbnail)
+    }
 }

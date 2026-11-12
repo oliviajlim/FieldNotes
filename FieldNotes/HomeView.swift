@@ -27,6 +27,13 @@ struct HomeView: View {
                     Text("Field Notes")
                         .font(AppFont.headline)
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        FieldNoteCalendarView(audioManager: audioManager)
+                    } label: {
+                        Label("Calendar", systemImage: "calendar")
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button("New Field Note", systemImage: "plus") {
                         isCreatingNote = true
