@@ -45,14 +45,14 @@ struct AudioScrubber: View {
                         }
                         .font(AppFont.caption)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(FieldNoteTheme.mutedInk)
                         .accessibilityHidden(true)
                     }
                 }
             } else if couldNotLoadAudio {
                 Text("Audio unavailable")
                     .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
             }
         }
         .task(id: fileName) {

@@ -49,10 +49,10 @@ struct CreateFieldNoteView: View {
 
                         if let date = media.date {
                             Text(date, format: .dateTime.year().month(.abbreviated).day().hour().minute())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(FieldNoteTheme.mutedInk)
                         } else {
                             Text("Date unavailable")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(FieldNoteTheme.mutedInk)
                         }
 
                         if media.isVideo {
@@ -60,7 +60,7 @@ struct CreateFieldNoteView: View {
                                 media.audio == nil ? "Video has no audio" : "Video audio included",
                                 systemImage: media.audio == nil ? "speaker.slash" : "waveform"
                             )
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(FieldNoteTheme.mutedInk)
                         }
                     }
 
@@ -85,31 +85,39 @@ struct CreateFieldNoteView: View {
 
                     if isPreparingMedia {
                         ProgressView("Preparing media…")
+                            .foregroundStyle(FieldNoteTheme.mutedInk)
                     }
 
                     if let photosSaveMessage {
                         Text(photosSaveMessage)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(FieldNoteTheme.mutedInk)
                     }
                 }
+                .listRowBackground(FieldNoteTheme.surface)
 
                 Section {
                     TextField("Caption", text: $caption, axis: .vertical)
+                        .foregroundStyle(FieldNoteTheme.ink)
                 }
+                .listRowBackground(FieldNoteTheme.surface)
 
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(FieldNoteTheme.clay)
                     }
+                    .listRowBackground(FieldNoteTheme.surface)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FieldNoteTheme.paper)
             .navigationTitle("New Field Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("New Field Note")
                         .font(AppFont.headline)
+                        .foregroundStyle(FieldNoteTheme.ink)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

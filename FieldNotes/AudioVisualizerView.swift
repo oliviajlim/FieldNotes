@@ -17,9 +17,10 @@ struct AudioVisualizerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Visualizer")
                     .font(AppFont.headline)
+                    .foregroundStyle(FieldNoteTheme.ink)
                 Text(sourceLabel)
                     .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
             }
 
             Picker("Visualizer mode", selection: $mode) {
@@ -42,6 +43,7 @@ struct AudioVisualizerView: View {
             }
         }
         .padding(12)
+        .background(FieldNoteTheme.surface, in: .rect(cornerRadius: 12))
     }
 }
 

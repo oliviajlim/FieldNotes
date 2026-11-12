@@ -23,7 +23,7 @@ struct SpectrumBarsView: View {
                 draw(visibleBars, in: context, size: size)
             }
             .frame(height: 160)
-            .background(Color(red: 0.015, green: 0.035, blue: 0.025))
+            .background(FieldNoteTheme.evergreen)
             .clipShape(.rect(cornerRadius: 8))
             .accessibilityLabel("Audio spectrum, low to high frequency")
             .accessibilityValue(sourceLabel)
@@ -34,7 +34,7 @@ struct SpectrumBarsView: View {
                 Text("High frequencies")
             }
             .font(AppFont.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(FieldNoteTheme.mutedInk)
             .accessibilityHidden(true)
         }
         .task(id: interval) {
@@ -85,7 +85,7 @@ struct SpectrumBarsView: View {
             grid.move(to: CGPoint(x: plot.minX, y: y))
             grid.addLine(to: CGPoint(x: plot.maxX, y: y))
         }
-        context.stroke(grid, with: .color(Color.green.opacity(0.2)), lineWidth: 0.5)
+        context.stroke(grid, with: .color(FieldNoteTheme.leaf.opacity(0.2)), lineWidth: 0.5)
 
         let slotWidth = plot.width / CGFloat(max(1, bars.count))
         let barWidth = slotWidth * 0.78

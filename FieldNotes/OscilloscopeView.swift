@@ -32,26 +32,26 @@ struct OscilloscopeView: View {
                         }
                     }
                     .frame(height: showsDepth ? 200 : 160)
-                    .background(Color(red: 0.015, green: 0.035, blue: 0.025))
+                    .background(FieldNoteTheme.evergreen)
                     .clipShape(.rect(cornerRadius: 8))
                     .accessibilityLabel(showsDepth ? "3D audio waveform" : "Audio waveform")
                     .accessibilityValue(sourceLabel)
 
                     Text("Window: \((snapshot.duration * 1000).formatted(.number.precision(.fractionLength(1)))) ms · Channel 1")
                         .font(AppFont.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(FieldNoteTheme.mutedInk)
                         .monospacedDigit()
                 }
             }
 
             HStack {
                 Text("Display gain")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
                 Slider(value: $gain, in: 1...20, step: 1)
                     .accessibilityLabel("Display gain")
                     .accessibilityValue("\(Int(gain)) times")
                 Text("×\(Int(gain))")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
                     .monospacedDigit()
                     .frame(minWidth: 36, alignment: .trailing)
             }
@@ -71,15 +71,15 @@ struct OscilloscopeView: View {
             grid.move(to: CGPoint(x: 0, y: y))
             grid.addLine(to: CGPoint(x: size.width, y: y))
         }
-        context.stroke(grid, with: .color(Color.green.opacity(0.25)), lineWidth: 0.5)
+        context.stroke(grid, with: .color(FieldNoteTheme.leaf.opacity(0.25)), lineWidth: 0.5)
     }
 
     private func drawTrace(_ samples: [Float], in context: GraphicsContext, size: CGSize) {
         let trace = tracePath(samples, maxPoints: 1024) { x, amplitude in
             CGPoint(x: x * size.width, y: size.height * (0.5 - amplitude * 0.45))
         }
-        context.stroke(trace, with: .color(Color.green.opacity(0.12)), lineWidth: 6)
-        context.stroke(trace, with: .color(Color.green), lineWidth: 1.2)
+        context.stroke(trace, with: .color(FieldNoteTheme.leaf.opacity(0.12)), lineWidth: 6)
+        context.stroke(trace, with: .color(FieldNoteTheme.leaf), lineWidth: 1.2)
     }
 
     private func drawWaterfall(_ frames: [[Float]], in context: GraphicsContext, size: CGSize) {
@@ -91,7 +91,7 @@ struct OscilloscopeView: View {
             grid.move(to: project(x: fraction, amplitude: 0, depth: 0, size: size))
             grid.addLine(to: project(x: fraction, amplitude: 0, depth: 1, size: size))
         }
-        context.stroke(grid, with: .color(Color.green.opacity(0.3)), lineWidth: 0.5)
+        context.stroke(grid, with: .color(FieldNoteTheme.leaf.opacity(0.3)), lineWidth: 0.5)
 
         // Draw the oldest trace first so the brightest trace sits in front.
         for (index, samples) in frames.enumerated() {
@@ -100,7 +100,7 @@ struct OscilloscopeView: View {
             let trace = tracePath(samples, maxPoints: 256) { x, amplitude in
                 project(x: x, amplitude: amplitude, depth: depth, size: size)
             }
-            let traceColor = Color.green.opacity(1 - depth * 0.78)
+            let traceColor = FieldNoteTheme.leaf.opacity(1 - depth * 0.78)
             context.stroke(trace, with: .color(traceColor), lineWidth: 1.4 - depth * 0.65)
         }
     }

@@ -26,7 +26,7 @@ struct NoteImageView: View {
                     .aspectRatio(contentMode: thumbnailPixelSize == nil ? .fit : .fill)
             } else {
                 Rectangle()
-                    .fill(.quaternary)
+                    .fill(FieldNoteTheme.mutedSurface)
                     .aspectRatio(4 / 3, contentMode: .fit)
             }
         }

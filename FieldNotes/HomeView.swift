@@ -20,12 +20,14 @@ struct HomeView: View {
 
                 }
             }
+            .background(FieldNoteTheme.paper)
             .scrollTargetBehavior(.paging)
             .navigationTitle("Field Notes")
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Field Notes")
                         .font(AppFont.headline)
+                        .foregroundStyle(FieldNoteTheme.ink)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     NavigationLink {
@@ -83,6 +85,7 @@ struct FieldCard: View {
         ScrollView(.vertical) {
             cardContent
         }
+        .background(FieldNoteTheme.paper)
         .containerRelativeFrame(.horizontal)
         .onChange(of: note.audioFileName) { _, _ in
             audioStartPosition = 0
@@ -114,13 +117,13 @@ struct FieldCard: View {
 
             if isRecordingThisNote {
                 Label("Recording…", systemImage: "record.circle")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(FieldNoteTheme.clay)
                     .padding(.horizontal, 20)
             }
 
             if let audioError {
                 Text(audioError)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(FieldNoteTheme.clay)
                     .padding(.horizontal, 20)
             }
 
@@ -134,14 +137,16 @@ struct FieldCard: View {
             Group {
                 if let date = note.createdAt {
                     Text(date, format: .dateTime.month(.abbreviated).day().year().hour().minute())
+                        .foregroundStyle(FieldNoteTheme.ink)
                 } else {
                     Text("Date unavailable")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(FieldNoteTheme.mutedInk)
                 }
             }
             .padding(.horizontal, 20)
 
             TextField("Caption", text: $note.caption)
+                .foregroundStyle(FieldNoteTheme.ink)
                 .onSubmit {
                     context.saveIfNeeded()
                 }

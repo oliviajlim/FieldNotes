@@ -46,18 +46,21 @@ struct FieldNoteCalendarView: View {
                             .padding(.top, 8)
                     } label: {
                         Text("Undated (\(undatedNotes.count))").font(AppFont.headline)
+                            .foregroundStyle(FieldNoteTheme.ink)
                     }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .background(FieldNoteTheme.paper)
         .navigationTitle("Calendar")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("Calendar")
                     .font(AppFont.headline)
+                    .foregroundStyle(FieldNoteTheme.ink)
             }
         }
     }
@@ -118,7 +121,7 @@ struct FieldNoteCalendarView: View {
             ForEach(0..<7, id: \.self) { index in
                 Text(symbols[(firstWeekday - 1 + index) % 7])
                     .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
                     .accessibilityHidden(true)
             }
             ForEach(0..<leadingDays, id: \.self) { _ in
@@ -153,18 +156,20 @@ struct FieldNoteCalendarView: View {
             HStack {
                 if let selectedDay {
                     Text(selectedDay, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                        .foregroundStyle(FieldNoteTheme.ink)
                     Spacer()
                     Button("Show Month") { self.selectedDay = nil }
                         .font(AppFont.caption)
                 } else {
                     Text("Notes")
+                        .foregroundStyle(FieldNoteTheme.ink)
                 }
             }
             .font(AppFont.headline)
 
             if visibleNotes.isEmpty {
                 Text(selectedDay == nil ? "No notes this month." : "No notes on this day.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FieldNoteTheme.mutedInk)
             } else {
                 gallery(visibleNotes)
             }
@@ -188,18 +193,19 @@ struct FieldNoteCalendarView: View {
                                         .font(.caption)
                                         .padding(6)
                                         .foregroundStyle(.white)
-                                        .background(.black.opacity(0.75), in: .capsule)
+                                        .background(FieldNoteTheme.evergreen.opacity(0.9), in: .capsule)
                                         .padding(6)
                                         .accessibilityLabel("Audio included")
                                 }
                             }
                         Text(note.caption.isEmpty ? "Field Note" : note.caption)
                             .font(AppFont.caption)
+                            .foregroundStyle(FieldNoteTheme.ink)
                             .lineLimit(2)
                         if let date = note.createdAt {
                             Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                                 .font(AppFont.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(FieldNoteTheme.mutedInk)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,7 +235,7 @@ private struct CalendarDayTile: View {
 
     private var dayNumberColor: Color {
         if imagePath != nil { return .white }
-        return isToday ? .accentColor : .primary
+        return isToday ? .accentColor : FieldNoteTheme.ink
     }
 
     var body: some View {
@@ -239,7 +245,7 @@ private struct CalendarDayTile: View {
                     .foregroundStyle(dayNumberColor)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(imagePath == nil ? .clear : .black.opacity(0.75), in: .capsule)
+                    .background(imagePath == nil ? .clear : FieldNoteTheme.evergreen.opacity(0.9), in: .capsule)
                     .padding(2)
             }
             .overlay(alignment: .bottomTrailing) {
@@ -248,7 +254,7 @@ private struct CalendarDayTile: View {
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                         .foregroundStyle(.white)
-                        .background(.black.opacity(0.75), in: .capsule)
+                        .background(FieldNoteTheme.evergreen.opacity(0.9), in: .capsule)
                         .padding(2)
                 }
             }
@@ -273,7 +279,7 @@ private struct CalendarCover: View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: .infinity, minHeight: heightRange?.lowerBound, maxHeight: heightRange?.upperBound)
-            .background(.primary.opacity(0.06))
+            .background(FieldNoteTheme.mutedSurface)
             .overlay {
                 if let imagePath {
                     NoteImageView(imagePath: imagePath, thumbnailPixelSize: maxPixelSize)
