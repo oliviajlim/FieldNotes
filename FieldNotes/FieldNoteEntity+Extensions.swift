@@ -17,7 +17,6 @@ extension FieldNoteEntity {
         super.awakeFromInsert()
 
         self.id = UUID()
-        self.createdAt = Date()
         self.text = ""
     }
 }

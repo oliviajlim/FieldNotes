@@ -23,14 +23,18 @@ struct HomeView: View {
             .scrollTargetBehavior(.paging)
             .navigationTitle("Field Notes")
             .toolbar {
-                Button(action: {
-                    isCreatingNote = true
-                }, label: {
-                    Image(systemName: "plus")
-                })
+                ToolbarItem(placement: .principal) {
+                    Text("Field Notes")
+                        .font(AppFont.headline)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("New Field Note", systemImage: "plus") {
+                        isCreatingNote = true
+                    }
+                }
             }
             .sheet(isPresented: $isCreatingNote) {
-                CreateFieldNoteView()
+                CreateFieldNoteView(audioManager: audioManager)
                     .environment(\.managedObjectContext, context)
             }
             .onChange(of: scenePhase) { _, newPhase in
@@ -120,8 +124,15 @@ struct FieldCard: View {
             )
             .padding(.horizontal, 20)
 
-            Text(note.createdAt ?? Date(), format: .dateTime.month(.abbreviated).day().year().hour().minute())
-                .padding(.horizontal, 20)
+            Group {
+                if let date = note.createdAt {
+                    Text(date, format: .dateTime.month(.abbreviated).day().year().hour().minute())
+                } else {
+                    Text("Date unavailable")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
 
             TextField("Caption", text: $note.caption)
                 .onSubmit {

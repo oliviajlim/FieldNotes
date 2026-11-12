@@ -25,8 +25,8 @@ enum ImageStore {
     }
 
     /// Re-encodes as JPEG so every stored photo has one predictable format. Returns the filename.
-    static func save(_ data: Data, id: UUID) throws -> String {
-        guard let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.8) else {
+    static func save(_ image: UIImage, id: UUID) throws -> String {
+        guard let jpeg = image.jpegData(compressionQuality: 0.8) else {
             throw ImageStoreError.unreadableImage
         }
 
@@ -48,4 +48,5 @@ enum ImageStore {
         }
         return await image.byPreparingForDisplay()
     }
+
 }

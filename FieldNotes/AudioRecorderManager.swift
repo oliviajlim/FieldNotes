@@ -102,6 +102,17 @@ final class AudioRecorderManager {
         try recordingsFolderURL().appending(path: "\(noteID.uuidString)-\(UUID().uuidString).m4a")
     }
 
+    static func importRecording(from source: URL, noteID: UUID) throws -> String {
+        let destination = try newRecordingURL(noteID: noteID)
+        do {
+            try FileManager.default.copyItem(at: source, to: destination)
+            return destination.lastPathComponent
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
     // MARK: - Recording
 
     func startRecording(id: UUID) throws {

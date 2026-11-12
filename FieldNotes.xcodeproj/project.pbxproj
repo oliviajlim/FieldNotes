@@ -273,8 +273,8 @@
 				INFOPLIST_FILE = FieldNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Field Notes";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio for your photo journal entry.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to upload an image to your journal entry.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record audio for your field notes and videos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Save photos and videos you capture to the Field Notes album in Photos.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -318,8 +318,8 @@
 				INFOPLIST_FILE = FieldNotes/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Field Notes";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio for your photo journal entry.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to upload an image to your journal entry.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record audio for your field notes and videos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Save photos and videos you capture to the Field Notes album in Photos.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

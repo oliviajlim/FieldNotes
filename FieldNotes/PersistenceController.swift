@@ -38,6 +38,7 @@ extension PersistenceController {
 
         for (image, caption) in [("sample-image", "Sun and dance"), ("sample-image-2", "Sleep")] {
             let note = FieldNoteEntity(context: context)
+            note.createdAt = Date()
             note.imagePath = image
             note.caption = caption
         }
