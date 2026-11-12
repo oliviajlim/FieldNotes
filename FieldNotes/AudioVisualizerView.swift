@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AudioVisualizerView: View {
     private enum Mode {
-        case waveform, waterfall, spectrum
+        case waveform, waterfall, spectrum, retro
     }
 
     let samples: OscilloscopeSamples
@@ -27,12 +27,16 @@ struct AudioVisualizerView: View {
                 Text("Waveform").tag(Mode.waveform)
                 Text("3D").accessibilityLabel("3D waveform").tag(Mode.waterfall)
                 Text("Spectrum").tag(Mode.spectrum)
+                Text("Retro").tag(Mode.retro)
             }
             .pickerStyle(.segmented)
 
-            if mode == .spectrum {
+            switch mode {
+            case .spectrum:
                 SpectrumBarsView(samples: samples, isActive: isActive, sourceLabel: sourceLabel)
-            } else {
+            case .retro:
+                RetroVisualizerView(samples: samples, isActive: isActive, sourceLabel: sourceLabel)
+            case .waveform, .waterfall:
                 OscilloscopeView(
                     samples: samples,
                     isActive: isActive,
