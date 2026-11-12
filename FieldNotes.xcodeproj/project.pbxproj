@@ -14,7 +14,7 @@
 		CB81C787306C4A1100310743 /* Exceptions for "FieldNotes" folder in "FieldNotes" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
+				Setup/Info.plist,
 			);
 			target = 000000000000000100000000 /* FieldNotes */;
 		};
@@ -273,7 +273,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = FieldNotes/Info.plist;
+				INFOPLIST_FILE = FieldNotes/Setup/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Field Notes";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record audio for your field notes and videos.";
@@ -319,7 +319,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = FieldNotes/Info.plist;
+				INFOPLIST_FILE = FieldNotes/Setup/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Field Notes";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record audio for your field notes and videos.";
