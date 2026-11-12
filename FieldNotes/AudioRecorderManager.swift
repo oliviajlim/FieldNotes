@@ -7,20 +7,47 @@
 
 import Observation
 import AVFAudio
+import Synchronization
 
 @Observable
 final class AudioRecorderManager {
+    enum RecordingError: Error {
+        case microphoneUnavailable
+        case unusableTake
+    }
+
+    private nonisolated struct Playback {
+        let noteID: UUID
+        let file: AVAudioFile
+        let frameCount: AVAudioFramePosition
+        let sampleRate: Double
+        var startFrame: AVAudioFramePosition = 0
+        var pausedPosition: TimeInterval?
+
+        var duration: TimeInterval { Double(frameCount) / sampleRate }
+        var startPosition: TimeInterval { Double(startFrame) / sampleRate }
+    }
+
+    private enum PlaybackError: Error {
+        case emptyFile
+    }
+
     var permissionStatus: AVAudioApplication.recordPermission = AVAudioApplication.shared.recordPermission
 
-    var activeRecordingNoteID: UUID? = nil
+    private(set) var activeRecordingNoteID: UUID? = nil
     private let audioEngine = AVAudioEngine()
-    private var recordingFile: AVAudioFile?
-    private var recordingURL: URL?
+    @ObservationIgnored private var recordingTake: RecordingTake?
 
-    private(set) var activePlaybackNoteID: UUID? = nil
-    private(set) var isPaused = false
+    let oscilloscopeSamples = OscilloscopeSamples()
+    @ObservationIgnored private var hasPlaybackTap = false
+
+    private var playback: Playback?
+    private var playbackRequest: (id: UUID, noteID: UUID)?
+    var activePlaybackNoteID: UUID? { playback?.noteID }
+    var loadingPlaybackNoteID: UUID? { playbackRequest?.noteID }
+    var isPaused: Bool { playback?.pausedPosition != nil }
     private let playerNode = AVAudioPlayerNode()
-    /// Bumped on every play/stop so a completion from an earlier playback is ignored.
+    /// A seek stops the previous segment, which can still call its completion handler.
     @ObservationIgnored private var playbackGeneration = 0
 
     var isRecording: Bool {
@@ -59,7 +86,7 @@ final class AudioRecorderManager {
     // MARK: - Files
 
     /// Application Support/Recordings, created if it doesn't exist yet.
-    private static func recordingsFolderURL() throws -> URL {
+    private nonisolated static func recordingsFolderURL() throws -> URL {
         let folderURL = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -71,13 +98,17 @@ final class AudioRecorderManager {
         return folderURL
     }
 
+    private static func newRecordingURL(noteID: UUID) throws -> URL {
+        try recordingsFolderURL().appending(path: "\(noteID.uuidString)-\(UUID().uuidString).m4a")
+    }
+
     // MARK: - Recording
 
-    func startRecording(id: UUID) {
-        guard !isRecording else {
-            print("already recording")
-            return
-        }
+    func startRecording(id: UUID) throws {
+        guard !isRecording else { return }
+
+        // Each take has its own file so a retake cannot overwrite a saved one.
+        let url = try Self.newRecordingURL(noteID: id)
 
         // Only one recording or playback at a time.
         stopPlayback()
@@ -86,162 +117,207 @@ final class AudioRecorderManager {
             try activateSession()
 
             let format = audioEngine.inputNode.outputFormat(forBus: 0)
-            /*
-             • audioEngine.inputNode is the microphone's spot in the engine's plumbing. You don't create it; the engine already has one.
-             • outputFormat asks what comes out of this node. Audio comes out of the mic node and flows toward your tap, so you want output.
-             • forBus: 0 needs a word you haven't met: a bus is a numbered connection socket on a node. The mic node has one output socket, number 0.
-             */
-            print("Mic format: \(format)")
-
-            try createFile(noteID: id, micFormat: format)
-            guard let recordingFile else {
-                cleanUpFailedRecording()
-                return
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw RecordingError.microphoneUnavailable
             }
 
-            Self.installTap(on: audioEngine.inputNode, format: format, file: recordingFile)
+            let take = try RecordingTake(url: url, format: format)
+            recordingTake = take
+            oscilloscopeSamples.clear()
+            Self.installTap(on: audioEngine.inputNode, format: format, take: take, samples: oscilloscopeSamples)
             audioEngine.prepare()
             try audioEngine.start()
 
             // Only mark the note as recording once audio is actually flowing.
             activeRecordingNoteID = id
         } catch {
-            print("error: \(error)")
-            cleanUpFailedRecording()
+            if recordingTake != nil {
+                _ = finishRecording()
+            } else {
+                deactivateSession()
+            }
+            try? FileManager.default.removeItem(at: url)
+            throw error
         }
-    }
-
-    /// Undoes a partial start so no tap, empty file, or active session is left behind.
-    private func cleanUpFailedRecording() {
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-        recordingFile = nil
-
-        if let recordingURL {
-            try? FileManager.default.removeItem(at: recordingURL)
-        }
-        recordingURL = nil
-
-        deactivateSession()
-    }
-
-    func createFile(noteID: UUID, micFormat: AVAudioFormat) throws {
-        let fileURL = try Self.recordingsFolderURL().appending(path: "\(noteID.uuidString).m4a")
-
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,   // on disk: compress to AAC (.m4a)
-            AVSampleRateKey: micFormat.sampleRate,                 // samples per second
-            AVNumberOfChannelsKey: micFormat.channelCount            // how many channels
-        ]
-
-        recordingFile = try AVAudioFile(
-            forWriting: fileURL,
-            settings: settings,
-            commonFormat: micFormat.commonFormat,        // the kind of numbers in the buffers (the "Float32" part)
-            interleaved: micFormat.isInterleaved       // how channels are arranged in the buffers
-        )
-        recordingURL = fileURL
-
-        print(fileURL)
-        print(FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)))
     }
 
     /// nonisolated: the tap closure runs on the audio thread, not the main thread.
     private nonisolated static func installTap(
         on input: AVAudioInputNode,
         format: AVAudioFormat,
-        file: AVAudioFile
+        take: RecordingTake,
+        samples: OscilloscopeSamples
     ) {
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
-            // ← runs ~10×/second on the AUDIO thread
-            do {
-                try file.write(from: buffer)
-            } catch {
-                print("write failed: \(error)")
-            }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            // The audio thread delivers PCM; the requested size is a hint to the engine.
+            samples.capture(buffer)
+            take.write(buffer)
         }
     }
 
-    func closeFile() {
-        recordingFile?.close()   // finalizes the .m4a so it's playable
-        recordingFile = nil
+    /// Returns a finalized take that the caller can link to the note.
+    func stopRecording() throws -> String? {
+        guard let take = finishRecording() else { return nil }
+        guard take.isUsable else {
+            try? FileManager.default.removeItem(at: take.url)
+            throw RecordingError.unusableTake
+        }
+        return take.url.lastPathComponent
     }
 
-    /// Stops recording and returns the saved file's name, or nil if nothing was recording.
-    func stopRecording() -> String? {
-        guard isRecording, let recordingURL else { return nil }
+    func discardRecording() {
+        guard let take = finishRecording() else { return }
+        try? FileManager.default.removeItem(at: take.url)
+    }
+
+    static func deleteRecording(fileName: String) {
+        guard let url = try? recordingsFolderURL().appending(path: fileName) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func finishRecording() -> (url: URL, isUsable: Bool)? {
+        guard let recordingTake else { return nil }
 
         // Order matters: stop the flow of buffers before sealing the file.
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-        closeFile()
+        let isUsable = recordingTake.finish()
         deactivateSession()
 
+        self.recordingTake = nil
         activeRecordingNoteID = nil
-        self.recordingURL = nil
-        return recordingURL.lastPathComponent
+        oscilloscopeSamples.clear()
+        return (recordingTake.url, isUsable)
     }
 
     // MARK: - Playback
 
-    /// Plays a saved recording, or resumes it if this note is paused.
-    func play(fileName: String, noteID: UUID) {
-        guard !isRecording else { return }
+    @concurrent nonisolated static func duration(fileName: String) async -> TimeInterval? {
+        guard let url = try? recordingsFolderURL().appending(path: fileName),
+              let file = try? AVAudioFile(forReading: url) else { return nil }
+        let rate = file.processingFormat.sampleRate
+        let frames = file.length
+        return rate > 0 && frames > 0 ? Double(frames) / rate : nil
+    }
 
-        if activePlaybackNoteID == noteID, isPaused {
-            playerNode.play()
-            isPaused = false
+    /// Plays a saved recording, or resumes it if this note is paused.
+    func play(fileName: String, noteID: UUID, from position: TimeInterval = 0) async throws {
+        guard !isRecording, playbackRequest == nil else { return }
+
+        if var current = playback, current.noteID == noteID, current.pausedPosition != nil {
+            if current.startFrame == current.frameCount {
+                schedulePlayback(current, at: 0, shouldPlay: true)
+            } else {
+                playerNode.play()
+                current.pausedPosition = nil
+                playback = current
+            }
             return
         }
 
         // A different note may be playing; stop it first.
         stopPlayback()
+        let requestID = UUID()
+        playbackRequest = (requestID, noteID)
+        defer {
+            if playbackRequest?.id == requestID { playbackRequest = nil }
+        }
 
         do {
+            let current = try await Self.openPlayback(fileName: fileName, noteID: noteID)
+            try Task.checkCancellation()
+            guard playbackRequest?.id == requestID else { return }
+
             try activateSession()
 
-            // Rebuild the full URL from the filename stored in Core Data.
-            let url = try Self.recordingsFolderURL().appending(path: fileName)
-            let file = try AVAudioFile(forReading: url)
-
             // file → playerNode → mainMixerNode → outputNode (speaker)
-            audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: file.processingFormat)
+            audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: current.file.processingFormat)
 
-            playbackGeneration += 1
-            let generation = playbackGeneration
-            Self.schedule(file, on: playerNode) { [weak self] in
-                self?.playbackFinished(generation: generation)
-            }
+            Self.installPlaybackTap(on: audioEngine.mainMixerNode, samples: oscilloscopeSamples)
+            hasPlaybackTap = true
 
             audioEngine.prepare()
             try audioEngine.start()
-            playerNode.play()
-
-            activePlaybackNoteID = noteID
-            isPaused = false
+            schedulePlayback(current, at: position >= current.duration ? 0 : position, shouldPlay: true)
         } catch {
-            print("playback error: \(error)")
+            guard playbackRequest?.id == requestID else { return }
             stopPlayback()
+            throw error
         }
     }
 
+    @concurrent private nonisolated static func openPlayback(fileName: String, noteID: UUID) async throws -> sending Playback {
+        let url = try recordingsFolderURL().appending(path: fileName)
+        let file = try AVAudioFile(forReading: url)
+        let frameCount = file.length
+        let sampleRate = file.processingFormat.sampleRate
+        guard frameCount > 0, sampleRate > 0 else { throw PlaybackError.emptyFile }
+        return Playback(noteID: noteID, file: file, frameCount: frameCount, sampleRate: sampleRate)
+    }
+
+    func playbackPosition(for noteID: UUID) -> TimeInterval? {
+        guard let current = playback, current.noteID == noteID else { return nil }
+        if let pausedPosition = current.pausedPosition { return pausedPosition }
+
+        guard let renderTime = playerNode.lastRenderTime,
+              let playerTime = playerNode.playerTime(forNodeTime: renderTime),
+              playerTime.sampleRate > 0 else { return current.startPosition }
+
+        let elapsed = max(0, Double(playerTime.sampleTime) / playerTime.sampleRate)
+        return min(current.duration, current.startPosition + elapsed)
+    }
+
+    func seek(to position: TimeInterval, noteID: UUID) {
+        guard let current = playback, current.noteID == noteID, position.isFinite else { return }
+        schedulePlayback(current, at: position, shouldPlay: current.pausedPosition == nil)
+    }
+
+    private func schedulePlayback(_ current: Playback, at position: TimeInterval, shouldPlay: Bool) {
+        playbackGeneration += 1
+        let generation = playbackGeneration
+        playerNode.stop()
+        oscilloscopeSamples.clear()
+
+        var segment = current
+        let seconds = position.isFinite ? max(0, position) : 0
+        segment.startFrame = seconds >= segment.duration
+            ? segment.frameCount
+            : AVAudioFramePosition(seconds * segment.sampleRate)
+        let hasFrames = segment.startFrame < segment.frameCount
+        segment.pausedPosition = shouldPlay && hasFrames ? nil : segment.startPosition
+        playback = segment
+
+        guard hasFrames else { return }
+        Self.schedule(segment.file, from: segment.startFrame, to: segment.frameCount, on: playerNode) { [weak self] in
+            self?.playbackFinished(generation: generation)
+        }
+        if shouldPlay { playerNode.play() }
+    }
+
     func pausePlayback() {
-        guard activePlaybackNoteID != nil, !isPaused else { return }
+        guard let current = playback, current.pausedPosition == nil else { return }
+        let position = playbackPosition(for: current.noteID) ?? current.startPosition
         playerNode.pause()
-        isPaused = true
+        playback?.pausedPosition = position
     }
 
     func stopPlayback() {
-        guard activePlaybackNoteID != nil else { return }
+        playbackRequest = nil
+        // The tap may exist even if engine.start() failed before setting the ID.
+        guard activePlaybackNoteID != nil || hasPlaybackTap else { return }
 
         // stop() fires the scheduled completion; bumping the generation makes it a no-op.
         playbackGeneration += 1
         playerNode.stop()
         audioEngine.stop()
+        if hasPlaybackTap {
+            audioEngine.mainMixerNode.removeTap(onBus: 0)
+            hasPlaybackTap = false
+        }
+        oscilloscopeSamples.clear()
         deactivateSession()
 
-        activePlaybackNoteID = nil
-        isPaused = false
+        playback = nil
     }
 
     private func playbackFinished(generation: Int) {
@@ -249,16 +325,86 @@ final class AudioRecorderManager {
         stopPlayback()
     }
 
+    private nonisolated static func installPlaybackTap(on mixer: AVAudioMixerNode, samples: OscilloscopeSamples) {
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+            samples.capture(buffer)
+        }
+    }
+
     /// nonisolated: the completion runs on an audio thread, so it hops back to the main actor.
     private nonisolated static func schedule(
         _ file: AVAudioFile,
+        from startFrame: AVAudioFramePosition,
+        to endFrame: AVAudioFramePosition,
         on player: AVAudioPlayerNode,
         onFinished: @escaping @MainActor @Sendable () -> Void
     ) {
-        player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { _ in
+        // AVAudioFrameCount is narrower than the file's frame positions.
+        let maximumSegmentLength = AVAudioFramePosition(AVAudioFrameCount.max)
+        var nextFrame = startFrame
+        while endFrame - nextFrame > maximumSegmentLength {
+            player.scheduleSegment(file, startingFrame: nextFrame, frameCount: .max, at: nil, completionHandler: nil)
+            nextFrame += maximumSegmentLength
+        }
+        player.scheduleSegment(
+            file,
+            startingFrame: nextFrame,
+            frameCount: AVAudioFrameCount(endFrame - nextFrame),
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { _ in
             Task { @MainActor in
                 onFinished()
             }
+        }
+    }
+}
+
+/// Serializes file writes with finalization if the last tap callback is still in flight.
+private nonisolated final class RecordingTake: Sendable {
+    private struct State {
+        var file: AVAudioFile?
+        var writeFailed = false
+    }
+
+    let url: URL
+    private let state: Mutex<State>
+
+    init(url: URL, format: AVAudioFormat) throws {
+        self.url = url
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: format.channelCount
+        ]
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
+        )
+        state = Mutex(State(file: file))
+    }
+
+    func write(_ buffer: AVAudioPCMBuffer) {
+        state.withLock { state in
+            guard let file = state.file, !state.writeFailed else { return }
+            do {
+                try file.write(from: buffer)
+            } catch {
+                state.writeFailed = true
+                print("Audio write failed: \(error)")
+            }
+        }
+    }
+
+    func finish() -> Bool {
+        state.withLock { state in
+            guard let file = state.file else { return false }
+            let isUsable = file.framePosition > 0 && !state.writeFailed
+            file.close()
+            state.file = nil
+            return isUsable
         }
     }
 }

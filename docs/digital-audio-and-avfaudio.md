@@ -198,8 +198,9 @@ TAP RECORD
   5. Engine:   start()                                        ← turn on the water
   6. State:    only now mark the note as "recording"
 
-  ...on the audio thread, about every 0.1 s:
-       tap receives a buffer → file.write(from: buffer)
+  ...on the audio thread, whenever the engine delivers a buffer:
+       tap receives a buffer → oscilloscopeSamples.capture(buffer)
+                             → file.write(from: buffer)
 
 TAP STOP
   7. removeTap                                                ← detach the spout
