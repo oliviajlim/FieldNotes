@@ -6,6 +6,8 @@ import Foundation
 import UniformTypeIdentifiers
 
 nonisolated struct VideoImport: Transferable {
+    static let maximumDurationSeconds = 30
+
     struct Preview: Sendable {
         let image: CGImage
         let date: Date?
@@ -27,8 +29,18 @@ nonisolated struct VideoImport: Transferable {
         }
     }
 
-    enum ImportError: Error {
+    enum ImportError: LocalizedError {
+        case tooLong
+        case unplayable
         case unusableAudio
+
+        var errorDescription: String? {
+            switch self {
+            case .tooLong: "Videos must be \(VideoImport.maximumDurationSeconds) seconds or shorter. Trim the clip in Photos and try again."
+            case .unplayable: "This video can't be played. Choose another clip."
+            case .unusableAudio: "Couldn't extract the sound from this video. Choose another clip."
+            }
+        }
     }
 
     private let file: TemporaryFile
@@ -49,7 +61,12 @@ nonisolated struct VideoImport: Transferable {
     @concurrent func prepare() async throws -> Preview {
         defer { withExtendedLifetime(file) {} }
         try Task.checkCancellation()
-        let asset = AVURLAsset(url: file.url)
+        let asset = AVURLAsset(url: file.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let duration = try await asset.load(.duration)
+        guard duration.isNumeric, duration > .zero else { throw ImportError.unplayable }
+        let limit = CMTime(value: Int64(Self.maximumDurationSeconds), timescale: 1)
+        guard duration <= limit else { throw ImportError.tooLong }
+        guard try await asset.load(.isPlayable) else { throw ImportError.unplayable }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -60,17 +77,21 @@ nonisolated struct VideoImport: Transferable {
         let date = try? await dateItem?.load(.dateValue)
         try Task.checkCancellation()
 
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-        guard !tracks.isEmpty else { return Preview(image: cover, date: date, audio: nil) }
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else { return Preview(image: cover, date: date, audio: nil) }
 
-        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+        let audio = TemporaryFile(fileExtension: "m4a")
+        do {
+            guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+                throw ImportError.unusableAudio
+            }
+            try await exporter.export(to: audio.url, as: .m4a)
+            guard try AVAudioFile(forReading: audio.url).length > 0 else { throw ImportError.unusableAudio }
+        } catch {
+            try Task.checkCancellation()
             throw ImportError.unusableAudio
         }
-        let audio = TemporaryFile(fileExtension: "m4a")
-        try await exporter.export(to: audio.url, as: .m4a)
         try Task.checkCancellation()
-
-        guard try AVAudioFile(forReading: audio.url).length > 0 else { throw ImportError.unusableAudio }
         return Preview(image: cover, date: date, audio: audio)
     }
 }

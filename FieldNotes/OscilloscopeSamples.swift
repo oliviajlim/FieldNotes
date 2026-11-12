@@ -33,11 +33,15 @@ nonisolated final class OscilloscopeSamples: Sendable {
     private let storage = Mutex(Storage())
 
     func capture(_ buffer: AVAudioPCMBuffer) {
-        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return }
+        guard let channels = buffer.floatChannelData else { return }
+        capture(channels[0], frames: Int(buffer.frameLength), stride: buffer.stride, sampleRate: buffer.format.sampleRate)
+    }
+
+    func capture(_ channel: UnsafePointer<Float>, frames: Int, stride: Int, sampleRate: Double) {
+        guard frames > 0, stride > 0, sampleRate > 0 else { return }
 
         // Skip a visual frame if the display is reading. Never wait on the UI.
         storage.withLockIfAvailable { storage in
-            let sampleRate = buffer.format.sampleRate
             if storage.sampleRate != sampleRate {
                 storage.nextSlot = 0
                 storage.frameCount = 0
@@ -45,10 +49,8 @@ nonisolated final class OscilloscopeSamples: Sendable {
                 storage.sourceGeneration &+= 1
             }
 
-            let count = min(Int(buffer.frameLength), Self.samplesPerFrame)
-            let start = Int(buffer.frameLength) - count
-            let channel = channels[0]
-            let stride = buffer.stride
+            let count = min(frames, Self.samplesPerFrame)
+            let start = frames - count
             let base = storage.nextSlot * Self.samplesPerFrame
 
             // Keep the most recent signed samples of channel 1 (left for stereo).

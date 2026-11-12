@@ -25,6 +25,9 @@ struct CameraCapturePicker: UIViewControllerRepresentable {
         picker.sourceType = .camera
         picker.mediaTypes = [mode.mediaType.identifier]
         picker.cameraCaptureMode = mode == .video ? .video : .photo
+        if mode == .video {
+            picker.videoMaximumDuration = TimeInterval(VideoImport.maximumDurationSeconds)
+        }
         picker.delegate = context.coordinator
         return picker
     }

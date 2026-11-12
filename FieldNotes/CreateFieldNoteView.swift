@@ -14,7 +14,7 @@ struct CreateFieldNoteView: View {
     private struct Media {
         let image: UIImage
         let date: Date?
-        var isVideo = false
+        var video: VideoImport?
         var audio: VideoImport.TemporaryFile?
     }
 
@@ -32,9 +32,10 @@ struct CreateFieldNoteView: View {
     @State private var errorMessage: String?
     @State private var photosSaveID: UUID?
     @State private var photosSaveMessage: String?
+    @State private var isSaving = false
 
     private var isPreparingMedia: Bool { librarySelection != nil || capturedVideo != nil }
-    private var isBusy: Bool { isPreparingMedia || cameraRequest != nil || isCameraCoverOpen }
+    private var isBusy: Bool { isSaving || isPreparingMedia || cameraRequest != nil || isCameraCoverOpen }
     private var canPrepareCapturedVideo: Bool { capturedVideo != nil && !isCameraCoverOpen }
 
     var body: some View {
@@ -55,12 +56,12 @@ struct CreateFieldNoteView: View {
                                 .foregroundStyle(FieldNoteTheme.mutedInk)
                         }
 
-                        if media.isVideo {
+                        if media.video != nil {
                             Label(
                                 media.audio == nil ? "Video has no audio" : "Video audio included",
                                 systemImage: media.audio == nil ? "speaker.slash" : "waveform"
                             )
-                            .foregroundStyle(FieldNoteTheme.mutedInk)
+                                .foregroundStyle(FieldNoteTheme.mutedInk)
                         }
                     }
 
@@ -92,6 +93,8 @@ struct CreateFieldNoteView: View {
                         Text(photosSaveMessage)
                             .foregroundStyle(FieldNoteTheme.mutedInk)
                     }
+                } footer: {
+                    Text("Videos can be up to \(VideoImport.maximumDurationSeconds) seconds long.")
                 }
                 .listRowBackground(FieldNoteTheme.surface)
 
@@ -123,10 +126,11 @@ struct CreateFieldNoteView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        save()
+                    Button(isSaving ? "Saving…" : "Save") {
+                        Task { await save() }
                     }
                     .disabled(media == nil || isBusy)
                 }
@@ -150,6 +154,7 @@ struct CreateFieldNoteView: View {
             }
         }
         .font(AppFont.body)
+        .interactiveDismissDisabled(isSaving)
     }
 
     private func loadSelectedMedia() async {
@@ -182,7 +187,7 @@ struct CreateFieldNoteView: View {
             media = selectedMedia
         } catch {
             guard !Task.isCancelled, librarySelection == selection else { return }
-            errorMessage = failureMessage
+            errorMessage = (error as? VideoImport.ImportError)?.errorDescription ?? failureMessage
             print("Media import failed: \(error)")
         }
     }
@@ -199,7 +204,7 @@ struct CreateFieldNoteView: View {
             errorMessage = "This camera doesn't support that capture mode."
             return
         }
-        guard !audioManager.isRecording else {
+        guard !audioManager.isRecording, !audioManager.isStartingRecording else {
             errorMessage = "Stop the current audio recording before opening the camera."
             return
         }
@@ -220,12 +225,15 @@ struct CreateFieldNoteView: View {
             }
         }
 
-        guard !audioManager.isRecording else {
+        if mode == .video {
+            await audioManager.prepareForVideoCapture()
+            guard !Task.isCancelled else { return }
+        }
+
+        guard !audioManager.isRecording, !audioManager.isStartingRecording else {
             errorMessage = "Stop the current audio recording before opening the camera."
             return
         }
-        if mode == .video { audioManager.stopPlayback() }
-
         errorMessage = nil
         isCameraCoverOpen = true
         presentedCamera = mode
@@ -283,37 +291,52 @@ struct CreateFieldNoteView: View {
             media = prepared
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = "Couldn't prepare the recorded video."
+            errorMessage = (error as? VideoImport.ImportError)?.errorDescription ?? "Couldn't prepare the recorded video."
             print("Captured video import failed: \(error)")
         }
     }
 
     private func prepareVideo(_ video: VideoImport) async throws -> Media {
         let preview = try await video.prepare()
-        return Media(image: UIImage(cgImage: preview.image), date: preview.date, isVideo: true, audio: preview.audio)
+        return Media(image: UIImage(cgImage: preview.image), date: preview.date, video: video, audio: preview.audio)
     }
 
-    private func save() {
-        guard let media else { return }
-
-        let note = FieldNoteEntity(context: context)
-        note.caption = caption
-        note.createdAt = media.date
-
-        let noteID = note.id ?? UUID()
+    private func save() async {
+        guard let media, !isBusy else { return }
+        isSaving = true
+        defer { isSaving = false }
+        let caption = caption
+        let noteID = UUID()
+        var videoFileName: String?
+        var audioFileName: String?
+        var imagePath: String?
+        var unsavedNote: FieldNoteEntity?
         do {
-            note.imagePath = try ImageStore.save(media.image, id: noteID)
-            if let audio = media.audio {
-                note.audioFileName = try AudioRecorderManager.importRecording(from: audio.url, noteID: noteID)
+            if let video = media.video {
+                videoFileName = try await VideoStore.save(video, id: noteID)
             }
+            if let audio = media.audio {
+                audioFileName = try AudioRecorderManager.importRecording(from: audio.url, noteID: noteID)
+            }
+            imagePath = try ImageStore.save(media.image, id: noteID)
+
+            let note = FieldNoteEntity(context: context)
+            unsavedNote = note
+            note.id = noteID
+            note.caption = caption
+            note.createdAt = media.date
+            note.imagePath = imagePath
+            note.videoFileName = videoFileName
+            note.audioFileName = audioFileName
 
             // Not saveIfNeeded: that rolls back silently, and here the user needs to know it failed.
             try context.save()
             dismiss()
         } catch {
-            if let imagePath = note.imagePath { ImageStore.delete(fileName: imagePath) }
-            if let audioFileName = note.audioFileName { AudioRecorderManager.deleteRecording(fileName: audioFileName) }
-            context.delete(note)
+            if let imagePath { ImageStore.delete(fileName: imagePath) }
+            if let videoFileName { VideoStore.delete(fileName: videoFileName) }
+            if let audioFileName { AudioRecorderManager.deleteRecording(fileName: audioFileName) }
+            if let unsavedNote { context.delete(unsavedNote) }
             errorMessage = "Couldn't save the note."
             print("save error: \(error)")
         }

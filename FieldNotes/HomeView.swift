@@ -16,6 +16,9 @@ struct HomeView: View {
                 LazyHStack(spacing: 0) {
                     ForEach(notes) { note in
                         FieldCard(note: note, audioManager: audioManager)
+                            .onScrollVisibilityChange { isVisible in
+                                if !isVisible, let id = note.id { audioManager.stopVideoPlayback(for: id) }
+                            }
                     }
 
                 }
@@ -38,6 +41,7 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("New Field Note", systemImage: "plus") {
+                        audioManager.stopVideoPlayback()
                         isCreatingNote = true
                     }
                 }
@@ -48,6 +52,7 @@ struct HomeView: View {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .background {
+                    audioManager.stopVideoPlayback()
                     context.saveIfNeeded()
                 }
             }
@@ -94,7 +99,11 @@ struct FieldCard: View {
 
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let imagePath = note.imagePath {
+            if let imagePath = note.imagePath, note.videoFileName != nil, let id = note.id {
+                NoteVideoView(imagePath: imagePath, noteID: id, audioManager: audioManager) {
+                    audioError = "Couldn't play this video."
+                }
+            } else if let imagePath = note.imagePath {
                 NoteImageView(imagePath: imagePath)
                     .containerRelativeFrame(.horizontal)
             }
@@ -105,13 +114,15 @@ struct FieldCard: View {
                 VStack(alignment: .leading, spacing: 10) { audioActions }
             }
             .buttonStyle(.bordered)
-            .disabled(isRequestingMicrophone || audioManager.loadingPlaybackNoteID != nil || (audioManager.isRecording && !isRecordingThisNote))
+            .disabled(isRequestingMicrophone || audioManager.isStartingRecording || audioManager.loadingPlaybackNoteID != nil
+                      || (audioManager.isRecording && !isRecordingThisNote))
             .padding(.horizontal, 20)
 
-            if let fileName = note.audioFileName, let id = note.id, !isRecordingThisNote {
-                AudioScrubber(fileName: fileName, noteID: id, audioManager: audioManager, startPosition: $audioStartPosition)
+            if let fileName = note.videoFileName ?? note.audioFileName, let id = note.id, !isRecordingThisNote {
+                AudioScrubber(fileName: fileName, isVideo: note.videoFileName != nil,
+                              noteID: id, audioManager: audioManager, startPosition: $audioStartPosition)
                     .id(fileName)
-                    .disabled(audioManager.isRecording || isRequestingMicrophone || isLoadingThisNote)
+                    .disabled(audioManager.isRecording || audioManager.isStartingRecording || isRequestingMicrophone || isLoadingThisNote)
                     .padding(.horizontal, 20)
             }
 
@@ -162,14 +173,14 @@ struct FieldCard: View {
             Button("Discard Take", systemImage: "xmark") {
                 audioManager.discardRecording()
             }
-        } else if let fileName = note.audioFileName {
+        } else if note.audioFileName != nil || note.videoFileName != nil {
             Button {
                 guard let id = note.id else { return }
                 audioError = nil
                 if isPlayingThisNote {
                     audioManager.pausePlayback()
                 } else {
-                    Task { await startPlayback(fileName: fileName, id: id) }
+                    Task { await startPlayback(id: id) }
                 }
             } label: {
                 if isLoadingThisNote {
@@ -182,7 +193,7 @@ struct FieldCard: View {
                     Label(isPlayingThisNote ? "Pause" : "Play", systemImage: isPlayingThisNote ? "pause.fill" : "play.fill")
                 }
             }
-            Button("Re-record", systemImage: "mic") {
+            Button(note.audioFileName == nil ? "Record" : "Re-record", systemImage: "mic") {
                 Task { await startRecording() }
             }
         } else {
@@ -192,14 +203,15 @@ struct FieldCard: View {
         }
     }
 
-    private func startPlayback(fileName: String, id: UUID) async {
+    private func startPlayback(id: UUID) async {
         do {
-            try await audioManager.play(fileName: fileName, noteID: id, from: audioStartPosition)
+            try await audioManager.play(fileName: note.audioFileName, videoFileName: note.videoFileName,
+                                        noteID: id, from: audioStartPosition)
             if audioManager.activePlaybackNoteID == id { audioStartPosition = 0 }
         } catch is CancellationError {
             return
         } catch {
-            audioError = "Couldn't play this recording."
+            audioError = note.videoFileName == nil ? "Couldn't play this recording." : "Couldn't play this video."
             print("Playback start failed: \(error)")
         }
     }
@@ -216,7 +228,9 @@ struct FieldCard: View {
         }
 
         do {
-            try audioManager.startRecording(id: id)
+            try await audioManager.startRecording(id: id)
+        } catch is CancellationError {
+            return
         } catch {
             audioError = "Couldn't start recording. Check your microphone and try again."
             print("Recording start failed: \(error)")

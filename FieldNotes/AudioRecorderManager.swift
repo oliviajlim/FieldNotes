@@ -7,6 +7,8 @@
 
 import Observation
 import AVFAudio
+import AVFoundation
+import Combine
 import Synchronization
 
 @Observable
@@ -32,20 +34,38 @@ final class AudioRecorderManager {
         case emptyFile
     }
 
+    private struct VideoPlayback {
+        let noteID: UUID
+        let player: AVPlayer
+        let duration: CMTime
+        let samples: OscilloscopeSamples
+        var isPaused = false
+        var pendingSeek: (id: UUID, time: CMTime)?
+
+        var position: CMTime { pendingSeek?.time ?? player.currentTime() }
+    }
+
     var permissionStatus: AVAudioApplication.recordPermission = AVAudioApplication.shared.recordPermission
 
     private(set) var activeRecordingNoteID: UUID? = nil
+    private(set) var isStartingRecording = false
     private let audioEngine = AVAudioEngine()
+    private let audioSession = AudioSessionTransitions()
     @ObservationIgnored private var recordingTake: RecordingTake?
 
-    let oscilloscopeSamples = OscilloscopeSamples()
+    private let audioSamples = OscilloscopeSamples()
+    var oscilloscopeSamples: OscilloscopeSamples { videoPlayback?.samples ?? audioSamples }
     @ObservationIgnored private var hasPlaybackTap = false
 
     private var playback: Playback?
-    private var playbackRequest: (id: UUID, noteID: UUID)?
-    var activePlaybackNoteID: UUID? { playback?.noteID }
+    private var videoPlayback: VideoPlayback?
+    @ObservationIgnored private var videoEndObserver: AnyCancellable?
+    @ObservationIgnored private var videoTimeObserver: Any?
+    private var playbackRequest: (id: UUID, noteID: UUID, isVideo: Bool)?
+    @ObservationIgnored private var playbackSessionRequested = false
+    var activePlaybackNoteID: UUID? { videoPlayback?.noteID ?? playback?.noteID }
     var loadingPlaybackNoteID: UUID? { playbackRequest?.noteID }
-    var isPaused: Bool { playback?.pausedPosition != nil }
+    var isPaused: Bool { videoPlayback?.isPaused ?? (playback?.pausedPosition != nil) }
     private let playerNode = AVAudioPlayerNode()
     /// A seek stops the previous segment, which can still call its completion handler.
     @ObservationIgnored private var playbackGeneration = 0
@@ -68,19 +88,21 @@ final class AudioRecorderManager {
 
     // MARK: - Session
 
-    /// .defaultToSpeaker: .playAndRecord otherwise plays through the quiet earpiece.
-    private func activateSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
+    private func activatePlaybackSession(_ mode: AudioSessionTransitions.Mode) async throws {
+        playbackSessionRequested = true
+        try await audioSession.activate(mode)
+        try Task.checkCancellation()
     }
 
-    private func deactivateSession() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("error deactivating session: \(error)")
-        }
+    private func releasePlaybackSession() {
+        guard playbackSessionRequested else { return }
+        playbackSessionRequested = false
+        audioSession.deactivate()
+    }
+
+    func prepareForVideoCapture() async {
+        stopPlayback()
+        await audioSession.waitForPendingOperations()
     }
 
     // MARK: - Files
@@ -115,17 +137,21 @@ final class AudioRecorderManager {
 
     // MARK: - Recording
 
-    func startRecording(id: UUID) throws {
-        guard !isRecording else { return }
+    func startRecording(id: UUID) async throws {
+        guard !isRecording, !isStartingRecording else { return }
+        try Task.checkCancellation()
 
         // Each take has its own file so a retake cannot overwrite a saved one.
         let url = try Self.newRecordingURL(noteID: id)
 
         // Only one recording or playback at a time.
+        isStartingRecording = true
+        defer { isStartingRecording = false }
         stopPlayback()
 
         do {
-            try activateSession()
+            try await audioSession.activate(.audio)
+            try Task.checkCancellation()
 
             let format = audioEngine.inputNode.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -134,8 +160,8 @@ final class AudioRecorderManager {
 
             let take = try RecordingTake(url: url, format: format)
             recordingTake = take
-            oscilloscopeSamples.clear()
-            Self.installTap(on: audioEngine.inputNode, format: format, take: take, samples: oscilloscopeSamples)
+            audioSamples.clear()
+            Self.installTap(on: audioEngine.inputNode, format: format, take: take, samples: audioSamples)
             audioEngine.prepare()
             try audioEngine.start()
 
@@ -145,7 +171,7 @@ final class AudioRecorderManager {
             if recordingTake != nil {
                 _ = finishRecording()
             } else {
-                deactivateSession()
+                audioSession.deactivate()
             }
             try? FileManager.default.removeItem(at: url)
             throw error
@@ -193,11 +219,11 @@ final class AudioRecorderManager {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
         let isUsable = recordingTake.finish()
-        deactivateSession()
+        audioSession.deactivate()
 
         self.recordingTake = nil
         activeRecordingNoteID = nil
-        oscilloscopeSamples.clear()
+        audioSamples.clear()
         return (recordingTake.url, isUsable)
     }
 
@@ -211,9 +237,18 @@ final class AudioRecorderManager {
         return rate > 0 && frames > 0 ? Double(frames) / rate : nil
     }
 
-    /// Plays a saved recording, or resumes it if this note is paused.
-    func play(fileName: String, noteID: UUID, from position: TimeInterval = 0) async throws {
-        guard !isRecording, playbackRequest == nil else { return }
+    /// Plays or resumes either kind of note through the same transport controls.
+    func play(fileName: String?, videoFileName: String? = nil, noteID: UUID, from position: TimeInterval = 0) async throws {
+        guard !isRecording, !isStartingRecording, playbackRequest == nil else { return }
+
+        if let current = videoPlayback, current.noteID == noteID, current.isPaused {
+            if current.position >= current.duration {
+                seekVideo(to: .zero, player: current.player)
+            }
+            videoPlayback?.isPaused = false
+            current.player.play()
+            return
+        }
 
         if var current = playback, current.noteID == noteID, current.pausedPosition != nil {
             if current.startFrame == current.frameCount {
@@ -229,22 +264,29 @@ final class AudioRecorderManager {
         // A different note may be playing; stop it first.
         stopPlayback()
         let requestID = UUID()
-        playbackRequest = (requestID, noteID)
+        playbackRequest = (requestID, noteID, videoFileName != nil)
         defer {
             if playbackRequest?.id == requestID { playbackRequest = nil }
         }
 
         do {
+            if let videoFileName {
+                try await openVideoPlayback(fileName: videoFileName, audioFileName: fileName, noteID: noteID,
+                                            from: position, requestID: requestID)
+                return
+            }
+            guard let fileName else { throw PlaybackError.emptyFile }
             let current = try await Self.openPlayback(fileName: fileName, noteID: noteID)
             try Task.checkCancellation()
             guard playbackRequest?.id == requestID else { return }
 
-            try activateSession()
+            try await activatePlaybackSession(.audio)
+            guard playbackRequest?.id == requestID else { return }
 
             // file → playerNode → mainMixerNode → outputNode (speaker)
             audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: current.file.processingFormat)
 
-            Self.installPlaybackTap(on: audioEngine.mainMixerNode, samples: oscilloscopeSamples)
+            Self.installPlaybackTap(on: audioEngine.mainMixerNode, samples: audioSamples)
             hasPlaybackTap = true
 
             audioEngine.prepare()
@@ -267,6 +309,10 @@ final class AudioRecorderManager {
     }
 
     func playbackPosition(for noteID: UUID) -> TimeInterval? {
+        if let current = videoPlayback, current.noteID == noteID {
+            let time = current.position
+            return time.isNumeric ? time.seconds : 0
+        }
         guard let current = playback, current.noteID == noteID else { return nil }
         if let pausedPosition = current.pausedPosition { return pausedPosition }
 
@@ -279,7 +325,18 @@ final class AudioRecorderManager {
     }
 
     func seek(to position: TimeInterval, noteID: UUID) {
-        guard let current = playback, current.noteID == noteID, position.isFinite else { return }
+        guard position.isFinite else { return }
+        if let current = videoPlayback, current.noteID == noteID {
+            current.samples.clear()
+            let time = position >= current.duration.seconds ? current.duration : Self.videoTime(position)
+            if time == current.duration {
+                current.player.pause()
+                videoPlayback?.isPaused = true
+            }
+            seekVideo(to: time, player: current.player)
+            return
+        }
+        guard let current = playback, current.noteID == noteID else { return }
         schedulePlayback(current, at: position, shouldPlay: current.pausedPosition == nil)
     }
 
@@ -287,7 +344,7 @@ final class AudioRecorderManager {
         playbackGeneration += 1
         let generation = playbackGeneration
         playerNode.stop()
-        oscilloscopeSamples.clear()
+        audioSamples.clear()
 
         var segment = current
         let seconds = position.isFinite ? max(0, position) : 0
@@ -306,6 +363,11 @@ final class AudioRecorderManager {
     }
 
     func pausePlayback() {
+        if let current = videoPlayback, !current.isPaused {
+            current.player.pause()
+            videoPlayback?.isPaused = true
+            return
+        }
         guard let current = playback, current.pausedPosition == nil else { return }
         let position = playbackPosition(for: current.noteID) ?? current.startPosition
         playerNode.pause()
@@ -313,22 +375,98 @@ final class AudioRecorderManager {
     }
 
     func stopPlayback() {
+        stopVideoPlayback()
         playbackRequest = nil
         // The tap may exist even if engine.start() failed before setting the ID.
-        guard activePlaybackNoteID != nil || hasPlaybackTap else { return }
-
-        // stop() fires the scheduled completion; bumping the generation makes it a no-op.
-        playbackGeneration += 1
-        playerNode.stop()
-        audioEngine.stop()
-        if hasPlaybackTap {
-            audioEngine.mainMixerNode.removeTap(onBus: 0)
-            hasPlaybackTap = false
+        if playback != nil || hasPlaybackTap {
+            // stop() fires the scheduled completion; bumping the generation makes it a no-op.
+            playbackGeneration += 1
+            playerNode.stop()
+            audioEngine.stop()
+            if hasPlaybackTap {
+                audioEngine.mainMixerNode.removeTap(onBus: 0)
+                hasPlaybackTap = false
+            }
+            audioSamples.clear()
+            playback = nil
         }
-        oscilloscopeSamples.clear()
-        deactivateSession()
+        releasePlaybackSession()
+    }
 
-        playback = nil
+    func videoPlayer(for noteID: UUID) -> AVPlayer? {
+        guard videoPlayback?.noteID == noteID else { return nil }
+        return videoPlayback?.player
+    }
+
+    private func openVideoPlayback(fileName: String, audioFileName: String?, noteID: UUID,
+                                   from position: TimeInterval, requestID: UUID) async throws {
+        let url = try VideoStore.fileURL(for: fileName)
+        let audioURL = try audioFileName.map { try Self.recordingsFolderURL().appending(path: $0) }
+        let samples = OscilloscopeSamples()
+        let (item, duration, waveform) = try await NoteVideoPlayback.load(videoURL: url, audioURL: audioURL)
+        try Task.checkCancellation()
+        guard playbackRequest?.id == requestID else { return }
+
+        try await activatePlaybackSession(.video)
+        guard playbackRequest?.id == requestID else { return }
+
+        let player = AVPlayer(playerItem: item)
+        videoPlayback = VideoPlayback(noteID: noteID, player: player, duration: duration, samples: samples)
+        if let waveform {
+            videoTimeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) {
+                @Sendable [weak self, weak player] time in
+                MainActor.assumeIsolated {
+                    guard let player, let current = self?.videoPlayback, current.player === player,
+                          !current.isPaused, current.pendingSeek == nil else { return }
+                    waveform.capture(at: time, into: samples)
+                }
+            }
+        }
+        videoEndObserver = NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification, object: item)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak player] _ in
+                guard let player, let current = self?.videoPlayback, current.player === player,
+                      !current.isPaused, current.position.seconds >= duration.seconds - 0.05 else { return }
+                self?.stopVideoPlayback(for: noteID)
+            }
+        if position.isFinite, position > 0, position < duration.seconds {
+            seekVideo(to: Self.videoTime(position), player: player)
+        }
+        player.play()
+    }
+
+    private func seekVideo(to time: CMTime, player: AVPlayer) {
+        let id = UUID()
+        videoPlayback?.pendingSeek = (id, time)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { @Sendable [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.videoPlayback?.pendingSeek?.id == id else { return }
+                self.videoPlayback?.pendingSeek = nil
+            }
+        }
+    }
+
+    func stopVideoPlayback(for noteID: UUID? = nil) {
+        if let request = playbackRequest, request.isVideo, noteID == nil || request.noteID == noteID {
+            playbackRequest = nil
+            // A dismissed card may still be waiting for session activation.
+            if videoPlayback == nil { releasePlaybackSession() }
+        }
+        guard let videoPlayback, noteID == nil || videoPlayback.noteID == noteID else { return }
+        videoEndObserver = nil
+        if let videoTimeObserver {
+            videoPlayback.player.removeTimeObserver(videoTimeObserver)
+            self.videoTimeObserver = nil
+        }
+        videoPlayback.player.pause()
+        videoPlayback.player.replaceCurrentItem(with: nil)
+        self.videoPlayback = nil
+        releasePlaybackSession()
+    }
+
+    private static func videoTime(_ seconds: TimeInterval) -> CMTime {
+        CMTime(seconds: max(0, seconds), preferredTimescale: 60_000)
     }
 
     private func playbackFinished(generation: Int) {

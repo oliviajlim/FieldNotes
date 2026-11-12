@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AudioScrubber: View {
     let fileName: String
+    let isVideo: Bool
     let noteID: UUID
     let audioManager: AudioRecorderManager
     @Binding var startPosition: TimeInterval
@@ -50,13 +51,17 @@ struct AudioScrubber: View {
                     }
                 }
             } else if couldNotLoadAudio {
-                Text("Audio unavailable")
+                Text(isVideo ? "Video unavailable" : "Audio unavailable")
                     .font(AppFont.caption)
                     .foregroundStyle(FieldNoteTheme.mutedInk)
             }
         }
         .task(id: fileName) {
-            let loadedDuration = await AudioRecorderManager.duration(fileName: fileName)
+            let loadedDuration = if isVideo {
+                await VideoStore.duration(fileName: fileName)
+            } else {
+                await AudioRecorderManager.duration(fileName: fileName)
+            }
             guard !Task.isCancelled else { return }
             duration = loadedDuration
             couldNotLoadAudio = loadedDuration == nil

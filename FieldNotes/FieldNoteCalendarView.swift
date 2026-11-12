@@ -188,14 +188,14 @@ struct FieldNoteCalendarView: View {
                         CalendarCover(imagePath: note.imagePath, maxPixelSize: 600)
                             .clipShape(.rect(cornerRadius: 10))
                             .overlay(alignment: .bottomTrailing) {
-                                if note.audioFileName != nil {
-                                    Image(systemName: "waveform")
+                                if note.videoFileName != nil || note.audioFileName != nil {
+                                    Image(systemName: note.videoFileName != nil ? "video" : "waveform")
                                         .font(.caption)
                                         .padding(6)
                                         .foregroundStyle(.white)
                                         .background(FieldNoteTheme.evergreen.opacity(0.9), in: .capsule)
                                         .padding(6)
-                                        .accessibilityLabel("Audio included")
+                                        .accessibilityLabel(note.videoFileName != nil ? "Video included" : "Audio included")
                                 }
                             }
                         Text(note.caption.isEmpty ? "Field Note" : note.caption)
