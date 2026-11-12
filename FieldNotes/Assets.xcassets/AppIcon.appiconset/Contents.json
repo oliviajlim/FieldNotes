@@ -1,0 +1,14 @@
+{
+  "images" : [
+    {
+      "filename" : "FieldNotes-Retro-Evergreen.png",
+      "platform" : "ios",
+      "size" : "1024x1024",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
